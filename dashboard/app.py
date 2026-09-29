@@ -21,7 +21,7 @@ st.set_page_config(
 # CONFIGURATION
 # ==================================================
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://crypto-prediction-system.onrender.com"
 REFRESH_SECONDS = 60
 
 
@@ -46,22 +46,16 @@ st.caption(
 prediction = None
 
 try:
-
     prediction_response = requests.get(
         f"{API_URL}/prediction",
-        timeout=10
+        timeout=30
     )
 
     prediction_response.raise_for_status()
-
     prediction = prediction_response.json()
 
 except Exception as error:
-
-    st.error(
-        "Prediction API is not available."
-    )
-
+    st.error("Prediction API is not available.")
     st.write(str(error))
 
 
@@ -72,27 +66,20 @@ except Exception as error:
 market_df = pd.DataFrame()
 
 try:
-
     market_response = requests.get(
         f"{API_URL}/market-data",
         params={"limit": 100},
-        timeout=10
+        timeout=30
     )
 
     market_response.raise_for_status()
 
     market_data = market_response.json()
 
-    market_df = pd.DataFrame(
-        market_data
-    )
+    market_df = pd.DataFrame(market_data)
 
 except Exception as error:
-
-    st.error(
-        "Unable to load market data."
-    )
-
+    st.error("Unable to load market data.")
     st.write(str(error))
 
 
@@ -111,8 +98,11 @@ if not market_df.empty:
     )
 
     market_df["close_price"] = pd.to_numeric(
-        market_df["close_price"]
+        market_df["close_price"],
+        errors="coerce"
     )
+
+    market_df = market_df.sort_values("timestamp")
 
     current_price = float(
         market_df["close_price"].iloc[-1]
@@ -128,13 +118,13 @@ if prediction:
     if prediction.get("alert"):
 
         st.warning(
-            f"🔔 ALERT: {prediction['alert_message']}"
+            f"🔔 ALERT: {prediction.get('alert_message', 'Market alert detected.')}"
         )
 
     else:
 
         st.info(
-            f"ℹ️ {prediction['alert_message']}"
+            f"ℹ️ {prediction.get('alert_message', 'No active alert.')}"
         )
 
 
@@ -146,6 +136,9 @@ if prediction:
 
     card1, card2, card3, card4 = st.columns(4)
 
+    # ----------------------------------------------
+    # CURRENT PRICE
+    # ----------------------------------------------
 
     with card1:
 
@@ -163,38 +156,63 @@ if prediction:
                 "N/A"
             )
 
+    # ----------------------------------------------
+    # PREDICTION
+    # ----------------------------------------------
 
     with card2:
 
-        direction = prediction["prediction"]
-
-        direction_display = (
-            "🟢 UP"
-            if direction == "UP"
-            else "🔴 DOWN"
+        direction = prediction.get(
+            "prediction",
+            "N/A"
         )
+
+        if direction == "UP":
+
+            direction_display = "🟢 UP"
+
+        elif direction == "DOWN":
+
+            direction_display = "🔴 DOWN"
+
+        else:
+
+            direction_display = direction
 
         st.metric(
             "🤖 Prediction",
             direction_display
         )
 
+    # ----------------------------------------------
+    # CONFIDENCE
+    # ----------------------------------------------
 
     with card3:
 
-        confidence = float(
-            prediction["confidence"]
-        )
+        try:
 
-        confidence_percent = (
-            confidence * 100
-        )
+            confidence = float(
+                prediction.get(
+                    "confidence",
+                    0
+                )
+            )
+
+        except (TypeError, ValueError):
+
+            confidence = 0
+
+        confidence_percent = confidence * 100
 
         st.metric(
             "🎯 Confidence",
             f"{confidence_percent:.2f}%"
         )
 
+    # ----------------------------------------------
+    # ALERT STATUS
+    # ----------------------------------------------
 
     with card4:
 
@@ -210,22 +228,28 @@ if prediction:
         )
 
 
-    # ----------------------------------------------
+    # ==================================================
     # CONFIDENCE BAR
-    # ----------------------------------------------
+    # ==================================================
 
     st.write("### 🎯 Prediction Confidence")
 
     st.progress(
-        min(confidence, 1.0)
+        min(max(confidence, 0), 1)
     )
 
-    threshold = float(
-        prediction.get(
-            "threshold",
-            0.60
+    try:
+
+        threshold = float(
+            prediction.get(
+                "threshold",
+                0.60
+            )
         )
-    )
+
+    except (TypeError, ValueError):
+
+        threshold = 0.60
 
     st.caption(
         f"Model confidence: "
@@ -234,48 +258,37 @@ if prediction:
         f"{threshold * 100:.0f}%"
     )
 
-    st.caption(
-        f"🕐 Last processed: "
-        f"{prediction['timestamp']}"
-    )
 
+# ==================================================
+# MARKET PRICE CHART
+# ==================================================
 
 st.divider()
 
-
-# ==================================================
-# BTC PRICE HISTORY
-# ==================================================
-
-st.subheader("📊 BTCUSDT Price History")
-
+st.subheader("📊 BTC Price Chart")
 
 if not market_df.empty:
 
-    price_fig = go.Figure()
+    fig = go.Figure()
 
-
-    price_fig.add_trace(
+    fig.add_trace(
         go.Scatter(
             x=market_df["timestamp"],
             y=market_df["close_price"],
             mode="lines",
-            name="BTCUSDT Price"
+            name="BTC Close Price"
         )
     )
 
-
-    price_fig.update_layout(
-        title="BTCUSDT Closing Price",
+    fig.update_layout(
         xaxis_title="Time",
-        yaxis_title="Price (USDT)",
-        height=500,
-        hovermode="x unified"
+        yaxis_title="BTC Price (USDT)",
+        hovermode="x unified",
+        height=450
     )
 
-
     st.plotly_chart(
-        price_fig,
+        fig,
         use_container_width=True
     )
 
@@ -286,275 +299,54 @@ else:
     )
 
 
-st.divider()
-
-
 # ==================================================
-# PREDICTION HISTORY
+# MARKET DATA TABLE
 # ==================================================
 
-st.subheader("🔮 Prediction History")
+st.subheader("📋 Latest Market Data")
 
+if not market_df.empty:
 
-try:
+    display_columns = [
+        "timestamp",
+        "open_price",
+        "high_price",
+        "low_price",
+        "close_price",
+        "volume"
+    ]
 
-    history_response = requests.get(
-        f"{API_URL}/prediction-history",
-        params={"limit": 50},
-        timeout=10
+    available_columns = [
+        column
+        for column in display_columns
+        if column in market_df.columns
+    ]
+
+    st.dataframe(
+        market_df[available_columns]
+        .sort_values(
+            "timestamp",
+            ascending=False
+        )
+        .head(20),
+        use_container_width=True,
+        hide_index=True
     )
 
-    history_response.raise_for_status()
-
-    history_data = history_response.json()
-
-    history_df = pd.DataFrame(
-        history_data
-    )
-
-
-    if not history_df.empty:
-
-        history_df["timestamp"] = pd.to_datetime(
-            history_df["timestamp"],
-            format="mixed",
-            utc=True
-        )
-
-        history_df["confidence"] = pd.to_numeric(
-            history_df["confidence"]
-        )
-
-        history_df["confidence_percent"] = (
-            history_df["confidence"] * 100
-        ).round(2)
-
-
-        # Direction
-
-        history_df["direction"] = (
-            history_df["prediction"]
-            .map(
-                {
-                    "UP": "🟢 UP",
-                    "DOWN": "🔴 DOWN"
-                }
-            )
-        )
-
-
-        # Signal
-
-        history_df["signal"] = history_df[
-            "confidence"
-        ].apply(
-            lambda value:
-                "🔔 ALERT"
-                if value >= threshold
-                else "Normal"
-        )
-
-
-        display_df = history_df[
-            [
-                "timestamp",
-                "symbol",
-                "direction",
-                "confidence_percent",
-                "signal"
-            ]
-        ].copy()
-
-
-        display_df.columns = [
-            "Time",
-            "Symbol",
-            "Direction",
-            "Confidence (%)",
-            "Signal"
-        ]
-
-
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-
-        # ------------------------------------------
-        # CONFIDENCE CHART
-        # ------------------------------------------
-
-        st.subheader(
-            "📈 Prediction Confidence History"
-        )
-
-
-        chart_df = history_df.sort_values(
-            "timestamp"
-        )
-
-
-        confidence_fig = go.Figure()
-
-
-        confidence_fig.add_trace(
-            go.Scatter(
-                x=chart_df["timestamp"],
-                y=chart_df["confidence_percent"],
-                mode="lines+markers",
-                name="Confidence"
-            )
-        )
-
-
-        confidence_fig.add_hline(
-            y=threshold * 100,
-            line_dash="dash",
-            annotation_text=(
-                f"Alert Threshold: "
-                f"{threshold * 100:.0f}%"
-            )
-        )
-
-
-        confidence_fig.update_layout(
-            title="Prediction Confidence Over Time",
-            xaxis_title="Time",
-            yaxis_title="Confidence (%)",
-            height=400,
-            hovermode="x unified"
-        )
-
-
-        st.plotly_chart(
-            confidence_fig,
-            use_container_width=True
-        )
-
-
-    else:
-
-        st.info(
-            "No prediction history available yet."
-        )
-
-
-except Exception as error:
-
-    st.error(
-        "Unable to load prediction history."
-    )
-
-    st.write(str(error))
-
-
-st.divider()
-
-
-# ==================================================
-# MODEL PERFORMANCE
-# ==================================================
-
-st.subheader("🧠 Model Performance")
-
-
-try:
-
-    metrics_response = requests.get(
-        f"{API_URL}/model-metrics",
-        timeout=10
-    )
-
-    metrics_response.raise_for_status()
-
-    metrics = metrics_response.json()
-
-
-    metric1, metric2, metric3, metric4 = st.columns(4)
-
-
-    # ----------------------------------------------
-    # TEST ACCURACY
-    # ----------------------------------------------
-
-    with metric1:
-
-        st.metric(
-            "Test Accuracy",
-            f"{metrics['test_accuracy_percent']:.2f}%"
-        )
-
-
-    # ----------------------------------------------
-    # WALK-FORWARD AVERAGE
-    # ----------------------------------------------
-
-    with metric2:
-
-        st.metric(
-            "Walk-Forward Avg.",
-            f"{metrics['walk_forward_average_percent']:.2f}%"
-        )
-
-
-    # ----------------------------------------------
-    # HIGHEST FOLD
-    # ----------------------------------------------
-
-    with metric3:
-
-        st.metric(
-            "Highest Fold",
-            f"{metrics['highest_walk_forward_fold_percent']:.2f}%"
-        )
-
-
-    # ----------------------------------------------
-    # LOWEST FOLD
-    # ----------------------------------------------
-
-    with metric4:
-
-        st.metric(
-            "Lowest Fold",
-            f"{metrics['lowest_walk_forward_fold_percent']:.2f}%"
-        )
-
-
-    st.write(
-        f"**Model:** {metrics['model']}"
-    )
-
-    st.write(
-        f"**Validation folds:** "
-        f"{metrics['walk_forward_folds']}"
-    )
+else:
 
     st.info(
-        f"ℹ️ {metrics['note']}"
+        "Market data is currently unavailable."
     )
-
-
-except Exception as error:
-
-    st.error(
-        "Unable to load model performance metrics."
-    )
-
-    st.write(str(error))
-
-
-st.divider()
 
 
 # ==================================================
 # SYSTEM STATUS
 # ==================================================
 
-st.subheader("⚙️ System Status")
+st.divider()
 
+st.subheader("⚙️ System Status")
 
 status1, status2, status3 = st.columns(3)
 
@@ -597,15 +389,24 @@ with status3:
 
 
 # ==================================================
-# AUTO REFRESH
+# FOOTER
 # ==================================================
 
 st.divider()
 
 st.caption(
-    "🔄 Dashboard will refresh automatically."
+    "⚠️ This dashboard provides model-based predictions "
+    "and does not guarantee trading profits."
 )
 
+st.caption(
+    "🔄 Dashboard will automatically refresh."
+)
+
+
+# ==================================================
+# AUTO REFRESH
+# ==================================================
 
 time.sleep(
     REFRESH_SECONDS
